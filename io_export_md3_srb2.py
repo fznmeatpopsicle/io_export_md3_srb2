@@ -118,6 +118,7 @@ class md3TexCoord:
 		return struct.calcsize(self.binaryFormat)
 
 	def Save(self, file):
+		tmpData = [0] * 2
 		tmpData[0] = self.u
 		tmpData[1] = 1.0 - self.v
 		data = struct.pack(self.binaryFormat, *tmpData)
