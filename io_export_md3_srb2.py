@@ -100,9 +100,11 @@ class md3Vert:
 
 	def Save(self, file):
 		tmpData = [0] * 4
-		tmpData[0] = int(self.xyz[0] * MD3_XYZ_SCALE)
-		tmpData[1] = int(self.xyz[1] * MD3_XYZ_SCALE)
-		tmpData[2] = int(self.xyz[2] * MD3_XYZ_SCALE)
+		for x in range(3):
+			if math.isnan(self.xyz[x]):
+				tmpData[x] = 0
+			else:
+				tmpData[x] = int(self.xyz[x] * MD3_XYZ_SCALE)
 		tmpData[3] = self.normal
 		data = struct.pack(self.binaryFormat, *tmpData)
 		file.write(data)
@@ -466,7 +468,11 @@ def save_md3(settings):###################### MAIN BODY
 
   ## Get and sort markers
   unsortedMarkers = bpy.context.scene.timeline_markers.values()
-  markers = sorted(unsortedMarkers, key=lambda x: x.frame)
+  filteredMarkers = []
+  for x in range(len(unsortedMarkers)):
+    if (unsortedMarkers[x].frame >= bpy.context.scene.frame_start) and (unsortedMarkers[x].frame <= bpy.context.scene.frame_end):
+      filteredMarkers.append(unsortedMarkers[x])
+  markers = sorted(filteredMarkers, key=lambda x: x.frame)
 
   for obj in selobjects:
     if obj.type == 'MESH':
