@@ -19,7 +19,6 @@
 # Original addon is from https://forums.duke4.net/topic/5358-blender-27-md3-export-script
 # Update to add animation tags by Emerald9D
 
-
 bl_info = {
     "name": "SRB2 .MD3",
     "author": "Photonic, Xembie, PhaethonH, Bob Holcomb, Damien McGinnes, Robert (Tr3B) Beckebans, Emerald9D",
@@ -351,7 +350,6 @@ class md3Object:
 		for s in self.surfaces:
 			s.Save(file)
 
-
 def message(log,msg):
   if log:
     log.write(msg + "\n")
@@ -451,6 +449,14 @@ def print_md3(log,md3,dumpall):
   message(log,"Total Triangles: " + str(tri_count))
   message(log,"Total Vertices: " + str(vert_count))
 
+# From Blender 2.79 scripts/addons/io_scene_obj/export_obj.py
+def mesh_triangulate(me):
+  import bmesh
+  bm = bmesh.new()
+  bm.from_mesh(me)
+  bmesh.ops.triangulate(bm, faces=bm.faces)
+  bm.to_mesh(me)
+  bm.free()
 
 def save_md3(settings):###################### MAIN BODY
   starttime = time.perf_counter()#start timer
@@ -474,6 +480,7 @@ def save_md3(settings):###################### MAIN BODY
       filteredMarkers.append(unsortedMarkers[x])
   markers = sorted(filteredMarkers, key=lambda x: x.frame)
 
+  ####### Convert to MD3
   for obj in selobjects:
     if obj.type == 'MESH':
       message(log,"Exporting " + obj.name)
@@ -481,6 +488,7 @@ def save_md3(settings):###################### MAIN BODY
       dg = bpy.context.evaluated_depsgraph_get()
       obj_eval = obj.evaluated_get(dg)
       nobj = obj_eval.to_mesh()
+      mesh_triangulate(nobj)
 
       nsurface = md3Surface()
       nsurface.name = obj.name
@@ -499,18 +507,6 @@ def save_md3(settings):###################### MAIN BODY
       nsurface.numShaders = 1
 
       vertlist = []
-
-      triangulate_warn = 0
-      for f,face in enumerate(nobj.polygons):
-        if triangulate_warn == 0:
-          if len(face.vertices) != 3:
-            triangulate_warn = 1
-
-      if triangulate_warn == 1:
-        message(log, "ERROR: non-tri face found in object " + obj.name )
-        message(log, "MD3 need triangulated mesh or add a triangulate")
-        message(log, "modifier which will be applied to the export")
-
 
       try:
         uvmap = nobj.uv_layers[0]
@@ -589,7 +585,6 @@ def save_md3(settings):###################### MAIN BODY
           prevMarkerName = curMarker.name
           curNumSuffix += 1
 
-
         ## Apply location data from objects and armatures
         if obj_eval.parent == "True":
           if obj_eval.parent.name == "Armature":
@@ -621,7 +616,6 @@ def save_md3(settings):###################### MAIN BODY
         md3.frames.append(nframe)
         nsurface.numFrames += 1
         obj_eval.to_mesh_clear()
-
 
       message(log,"Exported " + str(frame) + " frame(s) for " + obj.name)
 
@@ -673,32 +667,12 @@ class ExportMD3(bpy.types.Operator, ExportHelper):
   bl_label = 'Export MD3'
 
   filename_ext = ".md3"
-  filter_glob: bpy.props.StringProperty(
-    default="*.md3",
-    options={'HIDDEN'},
-    maxlen=255,  # Max internal buffer length, longer would be clamped.
-  )
+  filter_glob: bpy.props.StringProperty(default="*.md3", options={'HIDDEN'}, maxlen=255,)
 
-
-  filepath: StringProperty(
-      name="File Path",
-      description="Filepath for exporting",
-      maxlen= 1024,
-      default="")
-  md3name: StringProperty(
-      name="Skin Path",
-      description="MD3 header name / skin path (64 bytes)",
-      maxlen=64,
-      default="")
-  md3dumpall: BoolProperty(
-      name="Dump all",
-      description="Dump all data for md3 to log",
-      default=default_dumpall)
-  md3scale: FloatProperty(
-      name="Scale",
-      description="Scale all objects from world origin (0,0,0)",
-      default=default_scale,
-      precision=5)
+  filepath: StringProperty(name="File Path", description="Filepath for exporting", maxlen= 1024, default="")
+  md3name: StringProperty(name="Skin Path", description="MD3 header name / skin path (64 bytes)", maxlen=64, default="")
+  md3dumpall: BoolProperty(name="Dump all", description="Dump all data for md3 to log", default=default_dumpall)
+  md3scale: FloatProperty(name="Scale", description="Scale all objects from world origin (0,0,0)", default=default_scale, precision=5)
 
   @classmethod
   def poll(cls, context):
