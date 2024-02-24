@@ -449,7 +449,7 @@ def print_md3(log,md3,dumpall):
   message(log,"Total Triangles: " + str(tri_count))
   message(log,"Total Vertices: " + str(vert_count))
 
-# From Blender 2.79 scripts/addons/io_scene_obj/export_obj.py
+# Auto-Triangulate. From Blender 2.79 scripts/addons/io_scene_obj/export_obj.py
 def mesh_triangulate(me):
   import bmesh
   bm = bmesh.new()
@@ -488,7 +488,7 @@ def save_md3(settings):###################### MAIN BODY
       dg = bpy.context.evaluated_depsgraph_get()
       obj_eval = obj.evaluated_get(dg)
       nobj = obj_eval.to_mesh()
-      mesh_triangulate(nobj)
+      #mesh_triangulate(nobj)
 
       nsurface = md3Surface()
       nsurface.name = obj.name
