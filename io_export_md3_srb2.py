@@ -21,8 +21,8 @@
 
 bl_info = {
     "name": "SRB2 .MD3",
-    "author": "Photonic, Xembie, PhaethonH, Bob Holcomb, Damien McGinnes, Robert (Tr3B) Beckebans, Emerald9D",
-    "version": (1,7),# September seventeenth, twenty twenty two
+    "author": "Photonic, Xembie, PhaethonH, Bob Holcomb, Damien McGinnes, Robert (Tr3B) Beckebans, Emerald9D, Kaldrum",
+    "version": (1,8),# February twenty-fifth, twenty twenty four
     "blender": (2, 80, 0),
     "location": "File > Export > SRB2 (.md3)",
     "description": "Export mesh to SRB2 (.md3) with vertex animations, for Blender 2.8 and up",
@@ -32,11 +32,15 @@ bl_info = {
     "category": "Import-Export"}
 
 import bpy, struct, math, os, time
+from mathutils import Matrix
 from bpy_extras.io_utils import ExportHelper
 ##### User options: Exporter default settings
 default_savepath = ".md3"
+default_log = False
 default_dumpall = False
 default_scale = 1
+default_rot = True
+default_mirror = True
 #####
 
 MAX_QPATH = 64
@@ -357,11 +361,14 @@ def message(log,msg):
     print(msg)
 
 class md3Settings:
-  def __init__(self, savepath, name, dumpall=default_dumpall, scale=default_scale):
+  def __init__(self, savepath, name, log = default_log, dumpall=default_dumpall, scale=default_scale, rot = default_rot, mirror = default_mirror):
     self.savepath = savepath
     self.name = name
+    self.log = log
     self.dumpall = dumpall
     self.scale = scale
+    self.rot = rot
+    self.mirror = mirror
 
 def print_md3(log,md3,dumpall):
   message(log,"Header Information")
@@ -449,21 +456,28 @@ def print_md3(log,md3,dumpall):
   message(log,"Total Triangles: " + str(tri_count))
   message(log,"Total Vertices: " + str(vert_count))
 
-# Auto-Triangulate. From Blender 2.79 scripts/addons/io_scene_obj/export_obj.py
-def mesh_triangulate(me):
-  import bmesh
-  bm = bmesh.new()
-  bm.from_mesh(me)
-  bmesh.ops.triangulate(bm, faces=bm.faces)
-  bm.to_mesh(me)
-  bm.free()
+#adds a temporary triangulate modifier to a mesh object, if needed.
+#if remove is set to true, removes the modifier.
+def mesh_triangulate2(me, remove = False):
+  if remove:
+    mod = me.modifiers.get("__TEMP")
+    if mod is not None:
+      me.modifiers.remove(mod)
+    return
+
+  for mod in me.modifiers.values():
+    if mod.type == 'TRIANGULATE':
+      return
+  me.modifiers.new("__TEMP", 'TRIANGULATE')   
 
 def save_md3(settings):###################### MAIN BODY
   starttime = time.perf_counter()#start timer
   newlogpath = os.path.splitext(settings.savepath)[0] + ".log"
   dumpall = settings.dumpall
-  log = open(newlogpath,"w")
-  message(log,"########################BEGIN########################")
+  uselog = settings.log
+  if uselog:
+    log = open(newlogpath,"w")
+    message(log,"########################BEGIN########################")
   bpy.ops.object.mode_set(mode='OBJECT')
   md3 = md3Object()
   md3.ident = MD3_IDENT
@@ -471,24 +485,30 @@ def save_md3(settings):###################### MAIN BODY
   md3.name = settings.name
   md3.numFrames = (bpy.context.scene.frame_end + 1) - bpy.context.scene.frame_start
   selobjects = bpy.context.view_layer.objects.selected
+  
 
   ## Get and sort markers
   unsortedMarkers = bpy.context.scene.timeline_markers.values()
   filteredMarkers = []
   for x in range(len(unsortedMarkers)):
-    if (unsortedMarkers[x].frame >= bpy.context.scene.frame_start) and (unsortedMarkers[x].frame <= bpy.context.scene.frame_end):
+    if (unsortedMarkers[x].frame >= bpy.context.scene.frame_start) and (
+unsortedMarkers[x].frame <= bpy.context.scene.frame_end) and (
+unsortedMarkers[x] not in filteredMarkers):
       filteredMarkers.append(unsortedMarkers[x])
   markers = sorted(filteredMarkers, key=lambda x: x.frame)
 
   ####### Convert to MD3
   for obj in selobjects:
-    if obj.type == 'MESH':
-      message(log,"Exporting " + obj.name)
 
+    if obj.type == 'MESH':
+      if uselog: message(log,"Exporting " + obj.name)
+      mesh_triangulate2(obj)
       dg = bpy.context.evaluated_depsgraph_get()
       obj_eval = obj.evaluated_get(dg)
       nobj = obj_eval.to_mesh()
-      #mesh_triangulate(nobj)
+      mesh_triangulate2(obj, True)
+      
+      if settings.mirror: nobj.flip_normals()
 
       nsurface = md3Surface()
       nsurface.name = obj.name
@@ -511,9 +531,10 @@ def save_md3(settings):###################### MAIN BODY
       try:
         uvmap = nobj.uv_layers[0]
       except:
-        message(log, "ERROR: no UV Map found for object " + obj.name )
+        if uselog:
+          message(log, "ERROR: no UV Map found for object " + obj.name )
 
-      log.close()
+      if uselog: log.close()
 
       for f,face in enumerate(nobj.polygons):
         ntri = md3Triangle()
@@ -543,8 +564,9 @@ def save_md3(settings):###################### MAIN BODY
         nsurface.numTriangles += 1
       obj_eval.to_mesh_clear()
 
-      log = open(newlogpath,"a")
-      message(log,"Exported UVMap coordinates for " + obj.name)
+      if uselog:
+        log = open(newlogpath,"a")
+        message(log,"Exported UVMap coordinates for " + obj.name)
 
       ## Init markers index
       curMarkerIndex = 0
@@ -595,13 +617,23 @@ def save_md3(settings):###################### MAIN BODY
         else:
           nframe.localOrigin = obj_eval.location
           my_matrix = obj_eval.matrix_world
+          
+        # 90 degree rotation
+        if settings.rot:
+          loc, rot, scale = my_matrix.decompose()
+          loc_mat = Matrix.Translation(loc)
+          rot_mat = rot.to_matrix().to_4x4()
+          sca_mat = Matrix.Scale(scale[0],4,(1,0,0)) * Matrix.Scale(scale[1],4,(0,1,0)) @ Matrix.Scale(scale[2],4,(0,0,1))
+          rot_90_z = Matrix.Rotation(math.radians(90), 4, 'Z')
+          my_matrix = rot_90_z @ loc_mat @ rot_mat @ sca_mat
+          
         ## Locate, sort, encode verts and normals
         for vi in vertlist:
           vert = fobj.vertices[vi]
           nvert = md3Vert()
           nvert.xyz = my_matrix @ vert.co
           nvert.xyz[0] = round((nvert.xyz[0] * settings.scale),5)
-          nvert.xyz[1] = round((nvert.xyz[1] * settings.scale),5)
+          nvert.xyz[1] = round((nvert.xyz[1] * settings.scale),5) * (-1 if settings.mirror else 1) #invert if mirrored (post rotation)
           nvert.xyz[2] = round((nvert.xyz[2] * settings.scale),5)
           nvert.normal = my_matrix @ vert.normal
           nvert.normal = nvert.Encode(vert.normal)
@@ -617,7 +649,7 @@ def save_md3(settings):###################### MAIN BODY
         nsurface.numFrames += 1
         obj_eval.to_mesh_clear()
 
-      message(log,"Exported " + str(frame) + " frame(s) for " + obj.name)
+      if uselog:message(log,"Exported " + str(frame) + " frame(s) for " + obj.name)
 
       md3.surfaces.append(nsurface)
       md3.numSurfaces += 1
@@ -647,15 +679,16 @@ def save_md3(settings):###################### MAIN BODY
     file = open(settings.savepath, "wb")
     md3.Save(file)
     bpy.context.scene.frame_set(bpy.context.scene.frame_start)
-    print_md3(log,md3,settings.dumpall)
+    if uselog:print_md3(log,md3,settings.dumpall)
     file.close()
-    message(log,"MD3 saved to " + settings.savepath)
-    elapsedtime = round(time.perf_counter() - starttime,5)
-    message(log,"Elapsed " + str(elapsedtime) + " seconds")
+    if uselog:
+      message(log,"MD3 saved to " + settings.savepath)
+      elapsedtime = round(time.perf_counter() - starttime,5)
+      message(log,"Elapsed " + str(elapsedtime) + " seconds")
   else:
-    message(log,"Select an object to export!")
+    if uselog: message(log,"Select an object to export!")
 
-  if log:
+  if uselog:
     print("Logged to",newlogpath)
     log.close()
 
@@ -671,15 +704,19 @@ class ExportMD3(bpy.types.Operator, ExportHelper):
 
   filepath: StringProperty(name="File Path", description="Filepath for exporting", maxlen= 1024, default="")
   md3name: StringProperty(name="Skin Path", description="MD3 header name / skin path (64 bytes)", maxlen=64, default="")
+  md3log: BoolProperty(name="Generate log", description="Create a log file with the md3 export", default = default_log)
   md3dumpall: BoolProperty(name="Dump all", description="Dump all data for md3 to log", default=default_dumpall)
+  md3rot90: BoolProperty(name="Rotate 90° CCW", description="Rotate all objects from world origin (0,0,0) 90° counterclockwise for SRB2 md3 formatting", default=default_rot)
+  md3mirror_x: BoolProperty(name="Mirror X", description="Mirror the exported md3 across the X axis. The model will be consistent between blender and SRB2, but the actual md3 will be mirrored", default=default_mirror)
   md3scale: FloatProperty(name="Scale", description="Scale all objects from world origin (0,0,0)", default=default_scale, precision=5)
+  
 
   @classmethod
   def poll(cls, context):
     return context.active_object != None
 
   def execute(self, context):
-   settings = md3Settings(savepath = self.filepath, name = self.md3name, dumpall = self.md3dumpall, scale = self.md3scale)
+   settings = md3Settings(savepath = self.filepath, name = self.md3name, log = self.md3log, dumpall = self.md3log and self.md3dumpall, scale = self.md3scale, rot = self.md3rot90, mirror = self.md3mirror_x)
    save_md3(settings)
    return {'FINISHED'}
 
